@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <time.h>
 
 /* 매우 단순한 WireGuard 서버 스텁: 수신 패킷 길이/출력만 수행.
  * 실제 WireGuard 핸드셰이크(메시지 타입 1/2/4), NoiseIK 해시체인, 키 파생, AEAD(ChaCha20-Poly1305) 전혀 미구현.
@@ -54,6 +55,7 @@ int wg_run_stub(uint16_t port, int verbose){
     fprintf(stderr,"[wg] listening on UDP :%u (stub)\n", port);
     unsigned char buf[2048];
     size_t pkt_count=0;
+    time_t last_heartbeat = 0;
     while(1){
         struct sockaddr_in peer; socklen_t plen=sizeof(peer);
         ssize_t n = recvfrom(fd, buf, sizeof(buf), 0,(struct sockaddr*)&peer,&plen);
@@ -61,25 +63,34 @@ int wg_run_stub(uint16_t port, int verbose){
         if(n==0) continue;
         uint32_t mtype = *(uint32_t*)buf; /* little-endian 환경 가정 */
         pkt_count++;
+        /* Generic packet throttle: print every 50th unless verbose. */
         if(verbose || (pkt_count % 50 == 1)){
             fprintf(stderr,"[wg] packet %zd bytes from %s:%u type=%u (count=%zu)\n", n, inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), mtype, pkt_count);
         }
         if(mtype == WG_MSG_TYPE_HANDSHAKE_INITIATION){
             wg_handshake_initiation hs;
             if(wg_parse_handshake_initiation(buf,n,&hs)){
+                /* Always print a one-line summary for every handshake initiation (even without -v)
+                   so 사용자가 재전송 여부를 즉시 확인 가능 */
+                int mac1_zero=1; for(int i=0;i<WG_MAC_SIZE;i++) if(hs.mac1[i]) { mac1_zero=0; break; }
+                fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac2=%s (count=%zu)\n",
+                        hs.sender_index, mac1_zero, hs.mac2_present?"present":"none", pkt_count);
                 if(verbose){
-                    fprintf(stderr,"[wg] handshake init: sender_index=%u mac2=%s\n", hs.sender_index, hs.mac2_present?"present":"none");
                     dump_hex("  ephem", hs.ephemeral, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                     dump_hex("  static_enc", hs.static_enc, WG_KEY_SIZE+16, 16); fprintf(stderr,"\n");
                     dump_hex("  timestamp_enc", hs.timestamp_enc, 12+16, 12); fprintf(stderr,"\n");
                     dump_hex("  mac1", hs.mac1, WG_MAC_SIZE, WG_MAC_SIZE); fprintf(stderr,"\n");
-                    int mac1_zero=1; for(int i=0;i<WG_MAC_SIZE;i++) if(hs.mac1[i]) { mac1_zero=0; break; }
-                    fprintf(stderr,"[wg] mac1_zero=%d (placeholder validation)\n", mac1_zero);
                     dump_hex("  server_static_pub", ctx.static_public, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                 }
             } else if(verbose){
                 fprintf(stderr,"[wg] malformed handshake initiation\n");
             }
+        }
+        /* Heartbeat (idle indication) every ~5s even if no verbose, to show loop alive */
+        time_t now = time(NULL);
+        if(now - last_heartbeat >= 5){
+            fprintf(stderr,"[wg] heartbeat alive (pkts=%zu)\n", pkt_count);
+            last_heartbeat = now;
         }
     }
     close(fd);
