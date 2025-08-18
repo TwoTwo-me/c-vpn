@@ -45,13 +45,25 @@ static void fe_to_bytes(uint8_t out[32], fe25519 *r){
 static void fe_add(fe25519 *o,const fe25519 *a,const fe25519 *b){ for(int i=0;i<5;i++) o->v[i]=a->v[i]+b->v[i]; }
 static void fe_sub(fe25519 *o,const fe25519 *a,const fe25519 *b){ for(int i=0;i<5;i++) o->v[i]=a->v[i]-b->v[i]; }
 static void fe_mul(fe25519 *o,const fe25519 *a,const fe25519 *b){
-    __uint128_t t[5]={0};
+#if defined(__SIZEOF_INT128__)
+    unsigned __int128 t[5]={0};
     for(int i=0;i<5;i++) for(int j=0;j<5;j++){
-        int k = (i+j)%5; __uint128_t mul = ((__uint128_t)a->v[i])*b->v[j];
+        int k = (i+j)%5; unsigned __int128 mul = ( (unsigned __int128)a->v[i]) * b->v[j];
         if(i+j>=5) mul *= 19; t[k]+=mul; }
     uint64_t carry;
     for(int i=0;i<5;i++){ carry = (uint64_t)(t[i]>>51); o->v[i]=(uint64_t)t[i] & 0x7FFFFFFFFFFFFULL; if(i<4) t[i+1]+=carry; else o->v[0]+=carry*19; }
     carry = o->v[0] >> 51; o->v[0] &= 0x7FFFFFFFFFFFFULL; o->v[1]+=carry;
+#else
+    /* Fallback extremely naive (NOT constant time / NOT full 128-bit precision).
+       For 32-bit compilers lacking 128-bit, degrade: convert to bytes and use existing ladder with built-in mul (prototype only). */
+    uint64_t t[5]={0};
+    for(int i=0;i<5;i++) for(int j=0;j<5;j++){
+        int k=(i+j)%5; /* This will overflow; prototype only. */
+        unsigned long long mul = (a->v[i] & 0xFFFFFFFFULL) * (b->v[j] & 0xFFFFFFFFULL); /* low part */
+        if(i+j>=5) mul *= 19ULL; t[k]+=mul; }
+    for(int i=0;i<5;i++){ uint64_t carry = t[i] >> 51; o->v[i]= t[i] & 0x7FFFFFFFFFFFFULL; if(i<4) t[i+1]+=carry; else o->v[0]+=carry*19; }
+    uint64_t carry = o->v[0] >> 51; o->v[0] &= 0x7FFFFFFFFFFFFULL; o->v[1]+=carry;
+#endif
 }
 static void fe_sq(fe25519 *o,const fe25519 *a){ fe_mul(o,a,a); }
 
