@@ -60,10 +60,25 @@ static void blake2s_compress( blake2s_state *S, const uint8_t block[64] ) {
 
 int blake2s_init(blake2s_state *S, size_t outlen){
   if(outlen!=32) return -1;
-  S->h[0] = 0x6A09E667 ^ 0x01010000 ^ (uint32_t)outlen;
+  /* parameter block: digest_length | (key_length<<8) | (fanout<<16) | (depth<<24) */
+  uint32_t param = 32; /* digest length fixed */
+  S->h[0] = 0x6A09E667 ^ 0x01010000 ^ param;
   S->h[1] = 0xBB67AE85; S->h[2] = 0x3C6EF372; S->h[3] = 0xA54FF53A;
   S->h[4] = 0x510E527F; S->h[5] = 0x9B05688C; S->h[6] = 0x1F83D9AB; S->h[7] = 0x5BE0CD19;
   S->t[0]=S->t[1]=S->f[0]=S->f[1]=0; S->buflen=0; return 0;
+}
+
+static int blake2s_init_key(blake2s_state *S,size_t outlen,const void *key,size_t keylen){
+  if(outlen!=32 || keylen==0 || keylen>32) return -1;
+  uint32_t param = (uint32_t)outlen | ((uint32_t)keylen<<8); /* include key length */
+  S->h[0] = 0x6A09E667 ^ 0x01010000 ^ param;
+  S->h[1] = 0xBB67AE85; S->h[2] = 0x3C6EF372; S->h[3] = 0xA54FF53A;
+  S->h[4] = 0x510E527F; S->h[5] = 0x9B05688C; S->h[6] = 0x1F83D9AB; S->h[7] = 0x5BE0CD19;
+  S->t[0]=S->t[1]=S->f[0]=S->f[1]=0; S->buflen=0;
+  uint8_t block[64]={0};
+  memcpy(block,key,keylen);
+  blake2s_update(S,block,64); /* first block includes key */
+  return 0;
 }
 
 int blake2s_update(blake2s_state *S, const void *pin, size_t inlen){
@@ -96,6 +111,5 @@ void blake2s(const uint8_t *in,size_t inlen,uint8_t out[32]){
 }
 
 void blake2s_keyed(const uint8_t *key,size_t keylen,const uint8_t *in,size_t inlen,uint8_t out[32]){
-  /* Reference spec mixes key inside first block with parameter block; here we just (prototype) hash key||in */
-  blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,key,keylen); blake2s_update(&S,in,inlen); blake2s_final(&S,out,32);
+  blake2s_state S; blake2s_init_key(&S,32,key,keylen); blake2s_update(&S,in,inlen); blake2s_final(&S,out,32);
 }
