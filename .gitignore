@@ -20,3 +20,6 @@ ccache/
 # test dumps
 core
 core.*
+
+# wireguard persistent key
+wireguard_server.key

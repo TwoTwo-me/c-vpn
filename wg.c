@@ -39,6 +39,20 @@ static void dump_hex(const char *label,const uint8_t *p,size_t n,size_t limit){
     if(m<n) fprintf(stderr,"...");
 }
 
+static void b64_encode(const uint8_t *in,size_t inlen,char *out,size_t *outlen){
+    static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    size_t olen = 4 * ((inlen + 2) / 3);
+    if(*outlen < olen+1){ *outlen = 0; return; }
+    size_t ip=0,op=0; while(ip<inlen){
+        uint32_t v = in[ip++] << 16; if(ip<inlen) v |= in[ip++] << 8; if(ip<inlen) v |= in[ip++];
+        int pad = (ip>inlen? ip - inlen:0);
+        out[op++] = tbl[(v>>18)&63]; out[op++] = tbl[(v>>12)&63];
+        out[op++] = (pad>=2)? '=': tbl[(v>>6)&63];
+        out[op++] = (pad>=1)? '=': tbl[v&63];
+    }
+    out[op]=0; *outlen=op;
+}
+
 /* MAC1 = BLAKE2s(key=mac1_key, data=packet_without_mac1_mac2) truncated 16
  * 즉, 패킷 끝의 mac1(16)+mac2(16) 32바이트를 제외한 나머지. */
 void wg_mac1(wg_context *ctx, const uint8_t *packet,size_t len,uint8_t out[16]){
@@ -115,6 +129,10 @@ int wg_load_or_create_static_key(wg_context *ctx, const char *path){
     x25519_generate_keypair(ctx->static_private, ctx->static_public);
     f = fopen(path,"wb"); if(!f){ perror("[wg] fopen create key"); return -1; }
     if(fwrite(ctx->static_private,1,32,f)!=32){ perror("[wg] write key"); fclose(f); return -1; }
+    /* best-effort permission tighten */
+#ifdef __unix__
+    fchmod(fileno(f),0600);
+#endif
     fclose(f);
     fprintf(stderr,"[wg] created new static key at %s\n", path);
     return 0;
@@ -127,6 +145,16 @@ int wg_run_stub(uint16_t port, int verbose, const char *key_path){
             /* recompute mac1_key with loaded static_public */
             uint8_t label[] = { 'm','a','c','1','-','-','-','-' }; blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,label,sizeof(label)); blake2s_update(&S,ctx.static_public,WG_KEY_SIZE); blake2s_final(&S,ctx.mac1_key,32);
         }
+    }
+    /* Print static public key always (hex + base64) so client config 가능 */
+    {
+        char b64[128]; size_t blen=sizeof(b64);
+        b64_encode(ctx.static_public, WG_KEY_SIZE, b64, &blen);
+        fprintf(stderr,"[wg] static public key (hex) : ");
+        for(int i=0;i<WG_KEY_SIZE;i++) fprintf(stderr,"%02x", ctx.static_public[i]);
+        fprintf(stderr,"\n[wg] static public key (b64) : %s\n", b64);
+        if(key_path) fprintf(stderr,"[wg] private key file       : %s (raw 32-byte private)\n", key_path);
+        else fprintf(stderr,"[wg] private key ephemeral (not saved)\n");
     }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if(fd<0){ perror("socket"); return 1; }

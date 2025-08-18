@@ -10,13 +10,14 @@
 #include <getopt.h>
 
 int main(int argc, char **argv){
-    int wg_port = 0; int verbose=0; const char *wg_key_path=NULL;
-    /* 옵션: -wg <port> -wgkey <file> -v */
+    int wg_port = 0; int verbose=0; const char *wg_key_path=NULL; int key_forced=0;
+    /* 옵션: -wg <port> -wgkey <file> -v (키 파일 미지정 시 기본 wireguard_server.key 자동 사용) */
     for(int i=1;i<argc;i++){
         if(strcmp(argv[i],"-wg")==0 && i+1<argc){ wg_port = atoi(argv[++i]); }
-        else if(strcmp(argv[i],"-wgkey")==0 && i+1<argc){ wg_key_path = argv[++i]; }
+        else if(strcmp(argv[i],"-wgkey")==0 && i+1<argc){ wg_key_path = argv[++i]; key_forced=1; }
         else if(strcmp(argv[i],"-v")==0){ verbose++; }
     }
+    if(wg_port && !wg_key_path){ wg_key_path = "wireguard_server.key"; }
     printf("pvpn C 포팅 데모 (부분 기능)\n");
     // 데모: 가짜 IKEv2 헤더 파싱
     uint8_t demo[28]={0};
@@ -41,7 +42,7 @@ int main(int argc, char **argv){
         printf("ESP encrypted len=%zu\n", esp_len);
     }
     if(wg_port){
-        printf("WireGuard stub 시작: 포트 %d\n", wg_port);
+        printf("WireGuard stub 시작: 포트 %d (key=%s%s)\n", wg_port, wg_key_path?wg_key_path:"(ephemeral)", key_forced?"":" (default)" );
         wg_run_stub((uint16_t)wg_port, verbose, wg_key_path);
     }
     printf("완료\n");
