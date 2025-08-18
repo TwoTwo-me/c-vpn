@@ -44,4 +44,7 @@ typedef struct {
 void wg_context_init(wg_context *ctx);
 
 int wg_run_stub(uint16_t port, int verbose);
+
+/* MAC1 계산 (키는 아직 미정: 임시로 all-zero key 사용) */
+void wg_mac1(const uint8_t *packet,size_t len,uint8_t out[16]);
 #endif
