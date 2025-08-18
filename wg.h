@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <netinet/in.h>
+#include "x25519.h"
 
 /* WireGuard handshake message types */
 #define WG_MSG_TYPE_HANDSHAKE_INITIATION 1
@@ -42,14 +43,24 @@ typedef struct {
 	uint8_t mac1_key[32]; /* BLAKE2s("mac1----"||static_pub) */
 	int initialized;
 	uint32_t server_sender_index; /* our chosen index */
+	uint8_t chaining_key[32];
+	uint8_t handshake_hash[32];
+	uint8_t temp_key[32];
+	uint8_t eph_private[32];
+	uint8_t eph_public[32];
 } wg_context;
 
 void wg_context_init(wg_context *ctx);
 
-int wg_run_stub(uint16_t port, int verbose);
+int wg_run_stub(uint16_t port, int verbose, const char *key_path);
+int wg_load_or_create_static_key(wg_context *ctx, const char *path);
 
 /* MAC1 계산 (context 의 mac1_key 사용) */
 void wg_mac1(wg_context *ctx, const uint8_t *packet,size_t len,uint8_t out[16]);
+void wg_begin_handshake(wg_context *ctx, const uint8_t client_ephemeral[32]);
+void wg_noise_init(wg_context *ctx);
+void wg_mix_hash(wg_context *ctx,const uint8_t *data,size_t len);
+void wg_mix_key(wg_context *ctx,const uint8_t *ikm,size_t len);
 
 /* Handshake response raw layout (simplified) */
 typedef struct {

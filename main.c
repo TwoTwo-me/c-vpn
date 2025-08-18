@@ -10,10 +10,11 @@
 #include <getopt.h>
 
 int main(int argc, char **argv){
-    int wg_port = 0; int verbose=0;
-    /* 간단 옵션 파서: -wg <port> -v */
+    int wg_port = 0; int verbose=0; const char *wg_key_path=NULL;
+    /* 옵션: -wg <port> -wgkey <file> -v */
     for(int i=1;i<argc;i++){
         if(strcmp(argv[i],"-wg")==0 && i+1<argc){ wg_port = atoi(argv[++i]); }
+        else if(strcmp(argv[i],"-wgkey")==0 && i+1<argc){ wg_key_path = argv[++i]; }
         else if(strcmp(argv[i],"-v")==0){ verbose++; }
     }
     printf("pvpn C 포팅 데모 (부분 기능)\n");
@@ -41,7 +42,7 @@ int main(int argc, char **argv){
     }
     if(wg_port){
         printf("WireGuard stub 시작: 포트 %d\n", wg_port);
-        wg_run_stub((uint16_t)wg_port, verbose);
+        wg_run_stub((uint16_t)wg_port, verbose, wg_key_path);
     }
     printf("완료\n");
     return 0;

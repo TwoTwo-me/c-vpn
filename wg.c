@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <time.h>
 #include "blake2s.h"
+#include "x25519.h"
 
 /* 매우 단순한 WireGuard 서버 스텁: 수신 패킷 길이/출력만 수행.
  * 실제 WireGuard 핸드셰이크(메시지 타입 1/2/4), NoiseIK 해시체인, 키 파생, AEAD(ChaCha20-Poly1305) 전혀 미구현.
@@ -38,30 +39,95 @@ static void dump_hex(const char *label,const uint8_t *p,size_t n,size_t limit){
     if(m<n) fprintf(stderr,"...");
 }
 
-/* MAC1 = BLAKE2s(key=mac1_key, data=packet_without_mac2) truncated 16 */
+/* MAC1 = BLAKE2s(key=mac1_key, data=packet_without_mac1_mac2) truncated 16
+ * 즉, 패킷 끝의 mac1(16)+mac2(16) 32바이트를 제외한 나머지. */
 void wg_mac1(wg_context *ctx, const uint8_t *packet,size_t len,uint8_t out[16]){
-    size_t data_len = len - WG_MAC_SIZE; /* assume mac2 present or zeroed; subtract 16 */
+     size_t trailer = 2*WG_MAC_SIZE; /* mac1 + mac2 */
+     size_t data_len = (len>trailer)? (len - trailer) : len;
     if(data_len > len) data_len = len; /* safety */
     uint8_t full[32];
     blake2s_keyed(ctx->mac1_key, 32, packet, data_len, full);
     memcpy(out, full, 16);
 }
 
+void wg_begin_handshake(wg_context *ctx, const uint8_t client_ephemeral[32]){
+    /* Placeholder: update chaining_key = BLAKE2s(chaining_key || client_ephemeral) */
+    uint8_t buf[64];
+    memcpy(buf, ctx->chaining_key, 32);
+    memcpy(buf+32, client_ephemeral, 32);
+    blake2s(buf, 64, ctx->chaining_key);
+    /* Placeholder DH: XOR server eph_public with client ephemeral → mix_key */
+    uint8_t dh[32];
+    for(int i=0;i<32;i++) dh[i] = ctx->eph_public[i] ^ client_ephemeral[i];
+    wg_mix_key(ctx, dh, 32);
+}
+
 void wg_context_init(wg_context *ctx){
     if(ctx->initialized) return;
-    int fd = open("/dev/urandom", O_RDONLY);
-    if(fd>=0){ read(fd, ctx->static_private, WG_KEY_SIZE); close(fd);} else { for(int i=0;i<WG_KEY_SIZE;i++) ctx->static_private[i]=(uint8_t)(rand()&0xFF); }
-    memcpy(ctx->static_public, ctx->static_private, WG_KEY_SIZE); /* placeholder (no X25519) */
+    x25519_generate_keypair(ctx->static_private, ctx->static_public);
     /* mac1_key 파생 (라벨 + static_pub) */
     uint8_t label[] = { 'm','a','c','1','-','-','-','-' };
     blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,label,sizeof(label)); blake2s_update(&S,ctx->static_public,WG_KEY_SIZE); blake2s_final(&S,ctx->mac1_key,32);
     /* choose server sender index (random) */
     ctx->server_sender_index = ((uint32_t)ctx->static_private[0]<<24) ^ ((uint32_t)ctx->static_private[1]<<16) ^ ((uint32_t)ctx->static_private[2]<<8) ^ ctx->static_private[3];
+    /* Initialize Noise seeds */
+    wg_noise_init(ctx);
+    memset(ctx->temp_key,0,32);
+    /* ephemeral placeholder (reuse static for now) */
+    x25519_generate_keypair(ctx->eph_private, ctx->eph_public);
     ctx->initialized=1;
 }
 
-int wg_run_stub(uint16_t port, int verbose){
-    wg_context ctx={0}; wg_context_init(&ctx);
+void wg_noise_init(wg_context *ctx){
+    static const char proto[] = "Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s";
+    blake2s((const uint8_t*)proto, sizeof(proto)-1, ctx->chaining_key);
+    memcpy(ctx->handshake_hash, ctx->chaining_key, 32);
+}
+
+void wg_mix_hash(wg_context *ctx,const uint8_t *data,size_t len){
+    uint8_t buf[64]; if(len>32) len=32;
+    memcpy(buf, ctx->handshake_hash, 32);
+    memcpy(buf+32, data, len);
+    blake2s(buf, 32+len, ctx->handshake_hash);
+}
+
+void wg_mix_key(wg_context *ctx,const uint8_t *ikm,size_t len){
+    uint8_t buf[64]; if(len>32) len=32;
+    memcpy(buf, ctx->chaining_key, 32);
+    memcpy(buf+32, ikm, len);
+    blake2s(buf, 32+len, ctx->chaining_key);
+    blake2s(ctx->chaining_key,32,ctx->temp_key);
+}
+
+int wg_load_or_create_static_key(wg_context *ctx, const char *path){
+    if(!path) return 0; /* not used */
+    FILE *f = fopen(path,"rb");
+    uint8_t priv[32];
+    if(f){
+        size_t r=fread(priv,1,32,f); fclose(f);
+        if(r!=32){ fprintf(stderr,"[wg] key file size invalid (expected 32)\n"); return -1; }
+        memcpy(ctx->static_private, priv, 32);
+        x25519_public(ctx->static_private, ctx->static_public);
+        fprintf(stderr,"[wg] loaded static key from %s\n", path);
+        return 0;
+    }
+    /* create */
+    x25519_generate_keypair(ctx->static_private, ctx->static_public);
+    f = fopen(path,"wb"); if(!f){ perror("[wg] fopen create key"); return -1; }
+    if(fwrite(ctx->static_private,1,32,f)!=32){ perror("[wg] write key"); fclose(f); return -1; }
+    fclose(f);
+    fprintf(stderr,"[wg] created new static key at %s\n", path);
+    return 0;
+}
+
+int wg_run_stub(uint16_t port, int verbose, const char *key_path){
+    wg_context ctx={0}; wg_context_init(&ctx); /* generates random first */
+    if(key_path){
+        if(wg_load_or_create_static_key(&ctx,key_path)==0){
+            /* recompute mac1_key with loaded static_public */
+            uint8_t label[] = { 'm','a','c','1','-','-','-','-' }; blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,label,sizeof(label)); blake2s_update(&S,ctx.static_public,WG_KEY_SIZE); blake2s_final(&S,ctx.mac1_key,32);
+        }
+    }
     int fd = socket(AF_INET, SOCK_DGRAM, 0);
     if(fd<0){ perror("socket"); return 1; }
     struct sockaddr_in addr; memset(&addr,0,sizeof(addr));
@@ -100,7 +166,10 @@ int wg_run_stub(uint16_t port, int verbose){
                     dump_hex("  mac1_recv", hs.mac1, WG_MAC_SIZE, WG_MAC_SIZE); fprintf(stderr,"\n");
                     dump_hex("  mac1_calc", calc_mac1, 16, 16); fprintf(stderr,"\n");
                     dump_hex("  server_static_pub", ctx.static_public, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
+                    dump_hex("  chain_key_pre", ctx.chaining_key, 32, 16); fprintf(stderr," (pre-mix shown before update?)\n");
                 }
+                wg_begin_handshake(&ctx, hs.ephemeral);
+                if(verbose){ dump_hex("  chain_key_post", ctx.chaining_key, 32, 16); fprintf(stderr,"\n"); }
                 /* send dummy handshake response (no real crypto) */
                 wg_send_handshake_response(&ctx, fd, &peer, &hs, verbose);
             } else if(verbose){
