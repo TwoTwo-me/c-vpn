@@ -73,4 +73,12 @@ fail:
 }
 
 void ikev2_free_sa(ikev2_sa *sa){
-    if(!sa) return; for(size_t i=0;i<sa->proposal_count;i++){ free(sa->proposals[i].spi); free(sa->proposals[i].transforms);} free(sa->proposals); sa->proposals=NULL; sa->proposal_count=0; }
+    if(!sa) return;
+    for(size_t i=0;i<sa->proposal_count;i++){
+        free(sa->proposals[i].spi);
+        free(sa->proposals[i].transforms);
+    }
+    free(sa->proposals);
+    sa->proposals=NULL;
+    sa->proposal_count=0;
+}

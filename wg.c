@@ -51,16 +51,18 @@ int wg_run_stub(uint16_t port, int verbose){
     struct sockaddr_in addr; memset(&addr,0,sizeof(addr));
     addr.sin_family = AF_INET; addr.sin_port = htons(port); addr.sin_addr.s_addr = htonl(INADDR_ANY);
     if(bind(fd,(struct sockaddr*)&addr,sizeof(addr))<0){ perror("bind"); close(fd); return 1; }
-    if(verbose) fprintf(stderr,"[wg] listening on UDP :%u (stub)\n", port);
+    fprintf(stderr,"[wg] listening on UDP :%u (stub)\n", port);
     unsigned char buf[2048];
+    size_t pkt_count=0;
     while(1){
         struct sockaddr_in peer; socklen_t plen=sizeof(peer);
         ssize_t n = recvfrom(fd, buf, sizeof(buf), 0,(struct sockaddr*)&peer,&plen);
         if(n<0){ if(errno==EINTR) break; perror("recvfrom"); break; }
         if(n==0) continue;
         uint32_t mtype = *(uint32_t*)buf; /* little-endian 환경 가정 */
-        if(verbose){
-            fprintf(stderr,"[wg] packet %zd bytes from %s:%u type=%u\n", n, inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), mtype);
+        pkt_count++;
+        if(verbose || (pkt_count % 50 == 1)){
+            fprintf(stderr,"[wg] packet %zd bytes from %s:%u type=%u (count=%zu)\n", n, inet_ntoa(peer.sin_addr), ntohs(peer.sin_port), mtype, pkt_count);
         }
         if(mtype == WG_MSG_TYPE_HANDSHAKE_INITIATION){
             wg_handshake_initiation hs;
