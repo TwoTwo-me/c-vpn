@@ -38,11 +38,12 @@ static void dump_hex(const char *label,const uint8_t *p,size_t n,size_t limit){
     if(m<n) fprintf(stderr,"...");
 }
 
-/* MAC1 계산: 실제로는 BLAKE2s(key=mac1_key, data=packet_without_mac2) → 16바이트.
- * 현재는 key 파라미터 전달 대신, 단순 무키 버전 (임시). 추후 ctx 전달 구조로 변경 가능. */
-void wg_mac1(const uint8_t *packet,size_t len,uint8_t out[16]){
+/* MAC1 = BLAKE2s(key=mac1_key, data=packet_without_mac2) truncated 16 */
+void wg_mac1(wg_context *ctx, const uint8_t *packet,size_t len,uint8_t out[16]){
+    size_t data_len = len - WG_MAC_SIZE; /* assume mac2 present or zeroed; subtract 16 */
+    if(data_len > len) data_len = len; /* safety */
     uint8_t full[32];
-    blake2s(packet, len - WG_MAC_SIZE, full);
+    blake2s_keyed(ctx->mac1_key, 32, packet, data_len, full);
     memcpy(out, full, 16);
 }
 
@@ -86,7 +87,7 @@ int wg_run_stub(uint16_t port, int verbose){
                    so 사용자가 재전송 여부를 즉시 확인 가능 */
                 int mac1_zero=1; for(int i=0;i<WG_MAC_SIZE;i++) if(hs.mac1[i]) { mac1_zero=0; break; }
                 uint8_t calc_mac1[16];
-                wg_mac1(buf, (size_t)n, calc_mac1);
+                wg_mac1(&ctx, buf, (size_t)n, calc_mac1);
                 int mac1_match = memcmp(calc_mac1, hs.mac1, 16)==0;
                 fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac1_match(proto)=%d mac2=%s (count=%zu)\n",
                         hs.sender_index, mac1_zero, mac1_match, hs.mac2_present?"present":"none", pkt_count);
