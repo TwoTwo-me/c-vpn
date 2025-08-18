@@ -55,6 +55,8 @@ void wg_context_init(wg_context *ctx){
     /* mac1_key 파생 (라벨 + static_pub) */
     uint8_t label[] = { 'm','a','c','1','-','-','-','-' };
     blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,label,sizeof(label)); blake2s_update(&S,ctx->static_public,WG_KEY_SIZE); blake2s_final(&S,ctx->mac1_key,32);
+    /* choose server sender index (random) */
+    ctx->server_sender_index = ((uint32_t)ctx->static_private[0]<<24) ^ ((uint32_t)ctx->static_private[1]<<16) ^ ((uint32_t)ctx->static_private[2]<<8) ^ ctx->static_private[3];
     ctx->initialized=1;
 }
 
@@ -99,6 +101,8 @@ int wg_run_stub(uint16_t port, int verbose){
                     dump_hex("  mac1_calc", calc_mac1, 16, 16); fprintf(stderr,"\n");
                     dump_hex("  server_static_pub", ctx.static_public, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                 }
+                /* send dummy handshake response (no real crypto) */
+                wg_send_handshake_response(&ctx, fd, &peer, &hs, verbose);
             } else if(verbose){
                 fprintf(stderr,"[wg] malformed handshake initiation\n");
             }
@@ -111,5 +115,26 @@ int wg_run_stub(uint16_t port, int verbose){
         }
     }
     close(fd);
+    return 0;
+}
+
+int wg_send_handshake_response(wg_context *ctx,int fd,const struct sockaddr_in *peer,const wg_handshake_initiation *hs,int verbose){
+    wg_handshake_response_raw resp;
+    memset(&resp,0,sizeof(resp));
+    resp.type = WG_MSG_TYPE_HANDSHAKE_RESPONSE;
+    resp.sender_index = ctx->server_sender_index; /* little-endian assumption */
+    resp.receiver_index = hs->sender_index; /* reflect client's sender index */
+    /* ephemeral: placeholder copy of server static (should be fresh X25519 ephemeral) */
+    memcpy(resp.ephemeral, ctx->static_public, WG_KEY_SIZE);
+    /* empty_enc left zero + tag placeholder (not valid) */
+    /* mac1: compute keyed blake2s over packet without mac2 */
+    wg_mac1(ctx,(uint8_t*)&resp,sizeof(resp),resp.mac1);
+    /* mac2 all zero */
+    ssize_t sent = sendto(fd,&resp,sizeof(resp),0,(const struct sockaddr*)peer,sizeof(*peer));
+    if(sent!=(ssize_t)sizeof(resp)){
+        if(verbose) perror("sendto resp");
+        return -1;
+    }
+    if(verbose) fprintf(stderr,"[wg] sent handshake response (dummy) to %s:%u\n", inet_ntoa(peer->sin_addr), ntohs(peer->sin_port));
     return 0;
 }
