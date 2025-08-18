@@ -6,8 +6,16 @@
 #include "esp.h"
 #include "ipv4.h"
 #include "util.h"
+#include "wg.h"
+#include <getopt.h>
 
-int main(){
+int main(int argc, char **argv){
+    int wg_port = 0; int verbose=0;
+    /* 간단 옵션 파서: -wg <port> -v */
+    for(int i=1;i<argc;i++){
+        if(strcmp(argv[i],"-wg")==0 && i+1<argc){ wg_port = atoi(argv[++i]); }
+        else if(strcmp(argv[i],"-v")==0){ verbose++; }
+    }
     printf("pvpn C 포팅 데모 (부분 기능)\n");
     // 데모: 가짜 IKEv2 헤더 파싱
     uint8_t demo[28]={0};
@@ -30,6 +38,10 @@ int main(){
     uint8_t key[16]={0}; uint8_t iv[16]={0}; uint8_t auth_key[32]={0};
     if(esp_encrypt(0x11111111,1,key,iv,payload,sizeof(payload)-1,esp_out,&esp_len,auth_key,sizeof(auth_key))){
         printf("ESP encrypted len=%zu\n", esp_len);
+    }
+    if(wg_port){
+        printf("WireGuard stub 시작: 포트 %d\n", wg_port);
+        wg_run_stub((uint16_t)wg_port, verbose);
     }
     printf("완료\n");
     return 0;
