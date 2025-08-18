@@ -12,6 +12,13 @@
 #include "blake2s.h"
 #include "x25519.h"
 
+/* Development switch: set to 1 to drop handshake responses when MAC1 mismatch.
+ * In production WireGuard MUST verify MAC1 (DoS mitigation).
+ */
+#ifndef WG_REQUIRE_MAC1
+#define WG_REQUIRE_MAC1 0
+#endif
+
 /* 매우 단순한 WireGuard 서버 스텁: 수신 패킷 길이/출력만 수행.
  * 실제 WireGuard 핸드셰이크(메시지 타입 1/2/4), NoiseIK 해시체인, 키 파생, AEAD(ChaCha20-Poly1305) 전혀 미구현.
  * 포트 바인딩 후 블로킹 recvfrom 루프; SIGINT 시 종료.
@@ -193,9 +200,14 @@ int wg_run_stub(uint16_t port, int verbose, const char *key_path){
                 uint8_t calc_mac1[16];
                 wg_mac1(&ctx, buf, (size_t)n, calc_mac1);
                 int mac1_match = memcmp(calc_mac1, hs.mac1, 16)==0;
-                fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac1_match(proto)=%d mac2=%s (count=%zu)\n",
-                        hs.sender_index, mac1_zero, mac1_match, hs.mac2_present?"present":"none", pkt_count);
+                size_t trailer = 2*WG_MAC_SIZE; size_t data_len = (size_t)n>trailer? (size_t)n - trailer : (size_t)n;
+                fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac1_match=%d mac2=%s data_len=%zu total=%zd\n",
+                        hs.sender_index, mac1_zero, mac1_match, hs.mac2_present?"present":"none", data_len, n);
                 if(verbose){
+                    if(!mac1_match){
+                        fprintf(stderr,"  mac1 debug covered-bytes (first 64 of %zu): ", data_len);
+                        size_t lim = data_len<64?data_len:64; for(size_t ii=0; ii<lim; ++ii) fprintf(stderr,"%02x", buf[ii]); fprintf(stderr,"\n");
+                    }
                     dump_hex("  ephem", hs.ephemeral, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                     dump_hex("  static_enc", hs.static_enc, WG_KEY_SIZE+16, 16); fprintf(stderr,"\n");
                     dump_hex("  timestamp_enc", hs.timestamp_enc, 12+16, 12); fprintf(stderr,"\n");
@@ -204,10 +216,16 @@ int wg_run_stub(uint16_t port, int verbose, const char *key_path){
                     dump_hex("  server_static_pub", ctx.static_public, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                     dump_hex("  chain_key_pre", ctx.chaining_key, 32, 16); fprintf(stderr," (pre-mix shown before update?)\n");
                 }
-                wg_begin_handshake(&ctx, hs.ephemeral);
-                if(verbose){ dump_hex("  chain_key_post", ctx.chaining_key, 32, 16); fprintf(stderr,"\n"); }
-                /* send dummy handshake response (no real crypto) */
-                wg_send_handshake_response(&ctx, fd, &peer, &hs, verbose);
+                if(mac1_match || !WG_REQUIRE_MAC1){
+                    if(!mac1_match && !WG_REQUIRE_MAC1 && verbose){
+                        fprintf(stderr,"[wg] WARNING: accepting handshake with MAC1 mismatch (dev mode)\n");
+                    }
+                    wg_begin_handshake(&ctx, hs.ephemeral);
+                    if(verbose){ dump_hex("  chain_key_post", ctx.chaining_key, 32, 16); fprintf(stderr,"\n"); }
+                    wg_send_handshake_response(&ctx, fd, &peer, &hs, verbose);
+                } else {
+                    if(verbose) fprintf(stderr,"[wg] dropped handshake (MAC1 mismatch)\n");
+                }
             } else if(verbose){
                 fprintf(stderr,"[wg] malformed handshake initiation\n");
             }

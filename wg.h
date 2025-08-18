@@ -14,15 +14,25 @@
 #define WG_KEY_SIZE 32
 #define WG_MAC_SIZE 16
 
+/* Ensure exact on-wire layout (148 bytes) */
+#if defined(__GNUC__) || defined(__clang__)
+typedef struct __attribute__((packed)) {
+#else
+#pragma pack(push,1)
 typedef struct {
+#endif
 	uint32_t type;              /* 1 */
 	uint32_t sender_index;      /* little-endian */
 	uint8_t  ephemeral[WG_KEY_SIZE];
-	uint8_t  static_enc[WG_KEY_SIZE + 16]; /* encrypted static pub + tag */
-	uint8_t  timestamp_enc[12 + 16];       /* encrypted timestamp + tag */
+	uint8_t  static_enc[WG_KEY_SIZE + 16]; /* encrypted static pub + tag (48) */
+	uint8_t  timestamp_enc[12 + 16];       /* encrypted timestamp + tag (28) */
 	uint8_t  mac1[WG_MAC_SIZE];
 	uint8_t  mac2[WG_MAC_SIZE]; /* optional (all zero if unused) */
 } wg_handshake_initiation_raw;
+#if !(defined(__GNUC__) || defined(__clang__))
+#pragma pack(pop)
+#endif
+_Static_assert(sizeof(wg_handshake_initiation_raw)==148, "wg_handshake_initiation_raw size must be 148");
 
 /* Parsed view (no decryption yet) */
 typedef struct {
