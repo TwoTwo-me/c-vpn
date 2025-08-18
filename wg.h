@@ -38,6 +38,7 @@ int wg_parse_handshake_initiation(const uint8_t *data,size_t len,wg_handshake_in
 typedef struct {
 	uint8_t static_private[WG_KEY_SIZE];
 	uint8_t static_public[WG_KEY_SIZE]; /* placeholder: currently copies private (X25519 미구현) */
+	uint8_t mac1_key[32]; /* BLAKE2s("mac1----"||static_pub) */
 	int initialized;
 } wg_context;
 

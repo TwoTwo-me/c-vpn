@@ -94,3 +94,8 @@ int blake2s_final(blake2s_state *S, void *out, size_t outlen){
 void blake2s(const uint8_t *in,size_t inlen,uint8_t out[32]){
   blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,in,inlen); blake2s_final(&S,out,32);
 }
+
+void blake2s_keyed(const uint8_t *key,size_t keylen,const uint8_t *in,size_t inlen,uint8_t out[32]){
+  /* Reference spec mixes key inside first block with parameter block; here we just (prototype) hash key||in */
+  blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,key,keylen); blake2s_update(&S,in,inlen); blake2s_final(&S,out,32);
+}

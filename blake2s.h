@@ -22,5 +22,6 @@ int blake2s_final(blake2s_state *S, void *out, size_t outlen);
 
 /* Convenience: compute hash of single buffer */
 void blake2s(const uint8_t *in,size_t inlen,uint8_t out[32]);
+void blake2s_keyed(const uint8_t *key,size_t keylen,const uint8_t *in,size_t inlen,uint8_t out[32]);
 
 #endif

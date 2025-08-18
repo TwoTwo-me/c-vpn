@@ -38,12 +38,11 @@ static void dump_hex(const char *label,const uint8_t *p,size_t n,size_t limit){
     if(m<n) fprintf(stderr,"...");
 }
 
-/* WireGuard spec: MAC1 = BLAKE2s(key=mac1_key, data=first 148? entire packet without mac2) truncated 16B
- * 여기서는 아직 mac1_key를 모름 -> 시연을 위해 key=0^{32} 사용, 결과 헤더의 mac1과 비교 (비일치 예상).
- */
+/* MAC1 계산: 실제로는 BLAKE2s(key=mac1_key, data=packet_without_mac2) → 16바이트.
+ * 현재는 key 파라미터 전달 대신, 단순 무키 버전 (임시). 추후 ctx 전달 구조로 변경 가능. */
 void wg_mac1(const uint8_t *packet,size_t len,uint8_t out[16]){
     uint8_t full[32];
-    blake2s(packet, len - WG_MAC_SIZE /* exclude mac2 field when present */, full);
+    blake2s(packet, len - WG_MAC_SIZE, full);
     memcpy(out, full, 16);
 }
 
@@ -52,6 +51,9 @@ void wg_context_init(wg_context *ctx){
     int fd = open("/dev/urandom", O_RDONLY);
     if(fd>=0){ read(fd, ctx->static_private, WG_KEY_SIZE); close(fd);} else { for(int i=0;i<WG_KEY_SIZE;i++) ctx->static_private[i]=(uint8_t)(rand()&0xFF); }
     memcpy(ctx->static_public, ctx->static_private, WG_KEY_SIZE); /* placeholder (no X25519) */
+    /* mac1_key 파생 (라벨 + static_pub) */
+    uint8_t label[] = { 'm','a','c','1','-','-','-','-' };
+    blake2s_state S; blake2s_init(&S,32); blake2s_update(&S,label,sizeof(label)); blake2s_update(&S,ctx->static_public,WG_KEY_SIZE); blake2s_final(&S,ctx->mac1_key,32);
     ctx->initialized=1;
 }
 
@@ -86,14 +88,14 @@ int wg_run_stub(uint16_t port, int verbose){
                 uint8_t calc_mac1[16];
                 wg_mac1(buf, (size_t)n, calc_mac1);
                 int mac1_match = memcmp(calc_mac1, hs.mac1, 16)==0;
-                fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac1_match(zeros-key)=%d mac2=%s (count=%zu)\n",
+                fprintf(stderr,"[wg] HS1 sender=%u mac1_zero=%d mac1_match(proto)=%d mac2=%s (count=%zu)\n",
                         hs.sender_index, mac1_zero, mac1_match, hs.mac2_present?"present":"none", pkt_count);
                 if(verbose){
                     dump_hex("  ephem", hs.ephemeral, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                     dump_hex("  static_enc", hs.static_enc, WG_KEY_SIZE+16, 16); fprintf(stderr,"\n");
                     dump_hex("  timestamp_enc", hs.timestamp_enc, 12+16, 12); fprintf(stderr,"\n");
                     dump_hex("  mac1_recv", hs.mac1, WG_MAC_SIZE, WG_MAC_SIZE); fprintf(stderr,"\n");
-                    dump_hex("  mac1_calc_zero_key", calc_mac1, 16, 16); fprintf(stderr,"\n");
+                    dump_hex("  mac1_calc", calc_mac1, 16, 16); fprintf(stderr,"\n");
                     dump_hex("  server_static_pub", ctx.static_public, WG_KEY_SIZE, 16); fprintf(stderr,"\n");
                 }
             } else if(verbose){
