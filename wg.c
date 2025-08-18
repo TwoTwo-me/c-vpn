@@ -41,14 +41,18 @@ static void dump_hex(const char *label,const uint8_t *p,size_t n,size_t limit){
 
 static void b64_encode(const uint8_t *in,size_t inlen,char *out,size_t *outlen){
     static const char tbl[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    size_t olen = 4 * ((inlen + 2) / 3);
-    if(*outlen < olen+1){ *outlen = 0; return; }
-    size_t ip=0,op=0; while(ip<inlen){
-        uint32_t v = in[ip++] << 16; if(ip<inlen) v |= in[ip++] << 8; if(ip<inlen) v |= in[ip++];
-        int pad = (ip>inlen? ip - inlen:0);
-        out[op++] = tbl[(v>>18)&63]; out[op++] = tbl[(v>>12)&63];
-        out[op++] = (pad>=2)? '=': tbl[(v>>6)&63];
-        out[op++] = (pad>=1)? '=': tbl[v&63];
+    size_t need = 4 * ((inlen + 2) / 3);
+    if(*outlen < need + 1){ *outlen = 0; return; }
+    size_t op=0; size_t i=0;
+    while(i < inlen){
+        uint32_t v = (uint32_t)in[i++] << 16;
+        int have2 = 0, have3 = 0;
+        if(i < inlen){ v |= (uint32_t)in[i++] << 8; have2=1; }
+        if(i < inlen){ v |= in[i++]; have3=1; }
+        out[op++] = tbl[(v>>18)&63];
+        out[op++] = tbl[(v>>12)&63];
+        out[op++] = have2 ? tbl[(v>>6)&63] : '=';
+        out[op++] = have3 ? tbl[v&63] : '=';
     }
     out[op]=0; *outlen=op;
 }
@@ -153,6 +157,10 @@ int wg_run_stub(uint16_t port, int verbose, const char *key_path){
         fprintf(stderr,"[wg] static public key (hex) : ");
         for(int i=0;i<WG_KEY_SIZE;i++) fprintf(stderr,"%02x", ctx.static_public[i]);
         fprintf(stderr,"\n[wg] static public key (b64) : %s\n", b64);
+        if(verbose){
+            char privb64[128]; size_t prlen=sizeof(privb64); b64_encode(ctx.static_private, WG_KEY_SIZE, privb64, &prlen);
+            fprintf(stderr,"[wg] static private key (b64, keep secret) : %s\n", privb64);
+        }
         if(key_path) fprintf(stderr,"[wg] private key file       : %s (raw 32-byte private)\n", key_path);
         else fprintf(stderr,"[wg] private key ephemeral (not saved)\n");
     }
