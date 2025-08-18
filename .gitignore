@@ -1,0 +1,22 @@
+# build artifacts
+*.o
+pvpn_c
+
+# editor / os files
+.DS_Store
+*.swp
+*.swo
+
+# backups
+*~
+
+# clang / ccache
+.cache/
+ccache/
+
+# logs
+*.log
+
+# test dumps
+core
+core.*
