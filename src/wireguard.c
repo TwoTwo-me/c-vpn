@@ -48,7 +48,9 @@ void wg_init(struct wg_context *ctx, const char *password) {
     blake2s_hash(tmp, sizeof tmp, ctx->mac1_key);
     char b64[64];
     if (b64_encode(ctx->keys.public_key, 32, b64, sizeof b64) > 0) {
-        printf("======== WIREGUARD SETTING ========\nPublicKey: %s\n===================================\n", b64);
+        printf("======== WIREGUARD SETTING ========\nPublicKey(Base64): %s\n", b64);
+        hex_print("PublicKey(hex)", ctx->keys.public_key, 32);
+        printf("(Length base64=%zu should be 44 incl '=')\n===================================\n", strlen(b64));
     }
 }
 
