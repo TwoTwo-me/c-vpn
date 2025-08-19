@@ -13,6 +13,10 @@ int blake2s_hash(const uint8_t *in, size_t inlen, uint8_t out[32]) {
     return crypto_generichash_blake2b(out, 32, in, inlen, NULL, 0);
 }
 
+int blake2s_hash_key(const uint8_t *key, size_t keylen, const uint8_t *in, size_t inlen, uint8_t out[32]) {
+    return crypto_generichash_blake2b(out, 32, in, inlen, key, keylen);
+}
+
 int blake2s_key_mac16(const uint8_t *key, size_t keylen, const uint8_t *in, size_t inlen, uint8_t out[16]) {
     if (crypto_generichash_blake2b(out, 16, in, inlen, key, keylen)!=0) return -1; return 0;
 }

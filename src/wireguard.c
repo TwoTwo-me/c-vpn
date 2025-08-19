@@ -43,9 +43,8 @@ static const uint8_t identifier_name[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
 void wg_init(struct wg_context *ctx, const char *password) {
     derive_private_key(&ctx->keys, password, strlen(password));
     memset(ctx->psk, 0, sizeof ctx->psk);
-    /* mac1 key base = HASH("mac1----" + server_pub) */
-    uint8_t tmp[7+32]; memcpy(tmp, "mac1----", 7); memcpy(tmp+7, ctx->keys.public_key, 32); /* note python used HASH("mac1----" + pub) as key to MAC */
-    blake2s_hash(tmp, sizeof tmp, ctx->mac1_key);
+    /* mac1 key (spec): mac1_key = BLAKE2s(key="mac1----", data=server_pub) */
+    blake2s_hash_key((const uint8_t*)"mac1----", 8, ctx->keys.public_key, 32, ctx->mac1_key);
     char b64[64];
     if (b64_encode(ctx->keys.public_key, 32, b64, sizeof b64) > 0) {
         printf("======== WIREGUARD SETTING ========\nPublicKey(Base64): %s\n", b64);
@@ -61,6 +60,9 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
     uint8_t calc_mac1[16];
     blake2s_key_mac16(ctx->mac1_key, 32, in, 116, calc_mac1); /* first 116 bytes before macs */
     if (memcmp(calc_mac1, msg->mac1, 16)!=0) {
+        printf("[DEBUG] Handshake init: mac1 mismatch.\n");
+        printf("        Received: "); for (int i=0;i<16;i++) printf("%02x", msg->mac1[i]); printf("\n");
+        printf("        Computed: "); for (int i=0;i<16;i++) printf("%02x", calc_mac1[i]); printf("\n");
         return 0; /* drop */
     }
     /* mac2 must be zero */
@@ -86,7 +88,10 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
     memcpy(chaining_key, temp1_ck, 32);
     /* decrypt static peer key */
     uint8_t peer_static[32]; size_t dec_len=0;
-    if (aead_chacha20poly1305_decrypt(temp2, 0, msg->encrypted_static, 48, hash0, 32, peer_static, &dec_len)!=0 || dec_len!=32) return 0;
+    if (aead_chacha20poly1305_decrypt(temp2, 0, msg->encrypted_static, 48, hash0, 32, peer_static, &dec_len)!=0 || dec_len!=32) {
+        printf("[DEBUG] Decrypt peer static failed (len=%zu).\n", dec_len);
+        return 0;
+    }
     uint8_t hash1_input[32+48]; memcpy(hash1_input, hash0,32); memcpy(hash1_input+32, msg->encrypted_static,48);
     blake2s_hash(hash1_input, sizeof hash1_input, hash0);
     /* ECDH(server_priv, peer_static) */
@@ -94,7 +99,10 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
     hkdf_blake2s_3(chaining_key, dh2, 32, temp1_ck, temp1, temp2); memcpy(chaining_key, temp1_ck, 32);
     /* decrypt timestamp */
     uint8_t timestamp[12];
-    if (aead_chacha20poly1305_decrypt(temp2, 0, msg->encrypted_timestamp, 28, hash0, 32, timestamp, &dec_len)!=0 || dec_len!=12) return 0;
+    if (aead_chacha20poly1305_decrypt(temp2, 0, msg->encrypted_timestamp, 28, hash0, 32, timestamp, &dec_len)!=0 || dec_len!=12) {
+        printf("[DEBUG] Decrypt timestamp failed (len=%zu).\n", dec_len);
+        return 0;
+    }
     uint8_t hash2_input[32+28]; memcpy(hash2_input, hash0,32); memcpy(hash2_input+32, msg->encrypted_timestamp,28);
     blake2s_hash(hash2_input, sizeof hash2_input, hash0);
 
@@ -120,7 +128,7 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
     aead_chacha20poly1305_encrypt(nothing_key, 0, (const uint8_t*)"", 0, hash0, 32, encrypted_nothing, &enc_len); /* expect 16 tag */
 
     struct peer_state *peer = state_alloc(msg->sender_index);
-    if (!peer) return 0;
+    if (!peer) { printf("[DEBUG] state_alloc failed.\n"); return 0; }
     /* Derive final sending/receiving keys: use temp1_ck as chaining_key; then final HKDF */
     uint8_t final_ck[32], recv_key[32], send_key[32];
     hkdf_blake2s_3(chaining_key, (const uint8_t*)"", 0, final_ck, recv_key, send_key);
@@ -138,6 +146,7 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
     memset(resp.mac2, 0,16);
     if (out_max < sizeof resp) return 0;
     memcpy(out, &resp, sizeof resp);
+    printf("[DEBUG] Handshake response sent to index=%u local_index=%u\n", peer->peer_index, peer->local_index);
     return sizeof resp;
 }
 

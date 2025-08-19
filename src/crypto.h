@@ -21,6 +21,8 @@ int x25519(uint8_t out[32], const uint8_t priv[32], const uint8_t peer[32]);
 
 /* BLAKE2s (unkeyed) 32 bytes */
 int blake2s_hash(const uint8_t *in, size_t inlen, uint8_t out[32]);
+/* Keyed BLAKE2s (used for mac1 key derivation) */
+int blake2s_hash_key(const uint8_t *key, size_t keylen, const uint8_t *in, size_t inlen, uint8_t out[32]);
 /* HMAC(BLAKE2s) -> 32 bytes */
 int hmac_blake2s(const uint8_t *key, size_t keylen, const uint8_t *in, size_t inlen, uint8_t out[32]);
 /* Short MAC like python (blake2s(key=K, data) truncated 16) */
