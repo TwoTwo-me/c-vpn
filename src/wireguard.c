@@ -43,8 +43,9 @@ static const uint8_t identifier_name[] = "WireGuard v1 zx2c4 Jason@zx2c4.com";
 void wg_init(struct wg_context *ctx, const char *password) {
     derive_private_key(&ctx->keys, password, strlen(password));
     memset(ctx->psk, 0, sizeof ctx->psk);
-    /* mac1 key (spec): mac1_key = BLAKE2s(key="mac1----", data=server_pub) */
-    blake2s_hash_key((const uint8_t*)"mac1----", 8, ctx->keys.public_key, 32, ctx->mac1_key);
+    /* mac1 key (python variant): HASH("mac1----" + server_pub) */
+    uint8_t mac1tmp[8+32]; memcpy(mac1tmp, "mac1----", 8); memcpy(mac1tmp+8, ctx->keys.public_key, 32);
+    blake2s_hash(mac1tmp, sizeof mac1tmp, ctx->mac1_key);
     char b64[64];
     if (b64_encode(ctx->keys.public_key, 32, b64, sizeof b64) > 0) {
         printf("======== WIREGUARD SETTING ========\nPublicKey(Base64): %s\n", b64);
@@ -63,6 +64,7 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
         printf("[DEBUG] Handshake init: mac1 mismatch.\n");
         printf("        Received: "); for (int i=0;i<16;i++) printf("%02x", msg->mac1[i]); printf("\n");
         printf("        Computed: "); for (int i=0;i<16;i++) printf("%02x", calc_mac1[i]); printf("\n");
+        printf("        First 116 bytes: "); for (int i=0;i<116;i++) printf("%02x", ((uint8_t*)in)[i]); printf("\n");
         return 0; /* drop */
     }
     /* mac2 must be zero */
