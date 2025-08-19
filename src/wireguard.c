@@ -65,6 +65,21 @@ static size_t handle_initiation(struct wg_context *ctx, const uint8_t *in, size_
         printf("        Received: "); for (int i=0;i<16;i++) printf("%02x", msg->mac1[i]); printf("\n");
         printf("        Computed: "); for (int i=0;i<16;i++) printf("%02x", calc_mac1[i]); printf("\n");
         printf("        First 116 bytes: "); for (int i=0;i<116;i++) printf("%02x", ((uint8_t*)in)[i]); printf("\n");
+    /* Extra diagnostics: try alternative mac1 key derivations to see what client expects */
+    uint8_t alt_key1[32]; /* keyed blake2s key="mac1----" data=pub */
+    blake2s_hash_key((const uint8_t*)"mac1----", 8, ctx->keys.public_key, 32, alt_key1);
+    uint8_t alt_mac1[16]; blake2s_key_mac16(alt_key1, 32, in, 116, alt_mac1);
+    printf("        Alt1(key=BLAKE2s_keyed('mac1----',pub)) : "); for(int i=0;i<16;i++) printf("%02x", alt_mac1[i]); printf("\n");
+    uint8_t alt_key2[32]; /* direct BLAKE2s(pub) */
+    blake2s_hash(ctx->keys.public_key, 32, alt_key2);
+    uint8_t alt_mac2[16]; blake2s_key_mac16(alt_key2, 32, in, 116, alt_mac2);
+    printf("        Alt2(key=HASH(pub))                 : "); for(int i=0;i<16;i++) printf("%02x", alt_mac2[i]); printf("\n");
+    uint8_t alt_mac3[16]; /* key='mac1----' (8 bytes) */
+    blake2s_key_mac16((const uint8_t*)"mac1----", 8, in, 116, alt_mac3);
+    printf("        Alt3(key='mac1----')               : "); for(int i=0;i<16;i++) printf("%02x", alt_mac3[i]); printf("\n");
+    uint8_t alt_mac4[16]; /* key=mac1_key but over 148 bytes? (full msg) */
+    blake2s_key_mac16(ctx->mac1_key, 32, in, in_len-32, alt_mac4); /* exclude macs */
+    printf("        Alt4(key=HASH('mac1----'+pub),len=%zu): ", in_len-32); for(int i=0;i<16;i++) printf("%02x", alt_mac4[i]); printf("\n");
         return 0; /* drop */
     }
     /* mac2 must be zero */
